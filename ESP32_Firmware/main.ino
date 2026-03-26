@@ -608,90 +608,131 @@ void SineControl() {
 }
 
 void PIDControl() {
-  // === Delta T ===
   currT = micros();
   deltaT = ((float)(currT - prevT)) / 1.0e6;
   prevT = currT;
-  if (deltaT <= 0.0) deltaT = 0.005;
 
-  // === Desired speed and error ===
-  wk = des_speed;
-  e = wk - w;
-  proportional = Kp * e;
+  if (deltaT <= 0.0) {
+    deltaT = 0.005;
+  }
 
-  // === PID Interval ===
   if (Continuous == 1) {
-    PIDinterval = 5;
-    integral += (prev_e * deltaT * Ki);
-    derivative = (Kd / deltaT) * (e - prev_e);
+    PIDinterval = 5;              // ms
+  } 
+  else if (Discrete == 1) {
+    PIDinterval = T * 1000.0;     // T en segundos -> ms
   }
-
-  if (Discrete == 1) {
-    PIDinterval = T * 1000;
-    integral += (prev_e * T * Ki);
-    if (N == true) {
-      derivative = Kd * N * (e - prev_e) + prev_derivative * (1 - T * N);
-    } else {
-      derivative = (Kd / T) * (e - prev_e);
-    }
-  }
-
-  Vk = proportional + integral + derivative;
-
-  // === Saturation ===
-  if (Vk > 12.0) Vk = 12;
-  else if (Vk < -12.0) Vk = -12;
-  Vt = Vk;
-
-  dutyCycle = (Vk / VCC) * 100;
-  int dutyCycleMapped = map(dutyCycle, -100, 100, -255, 255);
-  pwmValue = abs(dutyCycleMapped);
-
-  controlMotor(motorStatus, dutyCycle, pwmValue);
-
-  // === Store Previous ===
-  prev_e = e;
-  prev_Ki = Ki;
-  prev_derivative = derivative;
 
   if (currentMillis - previousMillis >= PIDinterval) {
     previousMillis = currentMillis;
 
-    // === Get New Current ===
     current_mA = ina219.getCurrent_mA();
 
-    // === Filter Current (same method as speed filter) ===
     if (filtc) {
-      omega0c_rad = omega0c * 2 * pi;
-      float denom = (Continuous == 1) ? cos(deltaT * omega0c_rad) : cos(T * omega0c_rad);
+      omega0c_rad = omega0c * 2.0 * pi;
+      float Ts_current = (Continuous == 1) ? deltaT : T;
+
+      float denom = cos(Ts_current * omega0c_rad);
       if (abs(denom) < 0.0001) denom = 0.0001;
-      float raw_alpha = (1 - sin((Continuous == 1 ? deltaT : T) * omega0c_rad)) / denom;
+
+      float raw_alpha = (1.0 - sin(Ts_current * omega0c_rad)) / denom;
       alpha = constrain(raw_alpha, 0.0, 0.99);
-      a0 = (1 - alpha) / 2;
+      a0 = (1.0 - alpha) / 2.0;
 
       current_mA2 = a0 * (current_mA + xk1c) + alpha * yk1c;
       xk1c = current_mA;
       yk1c = current_mA2;
     }
 
-    // === Compute Angular Speed ===
-    w = (2 * pi * 1.0e6 * signo) / ((t - t_m) * ENC_PPR * GEAR_BOX);
+    long dt_encoder = t - t_m;
 
-    // === Filter Speed ===
+    if (dt_encoder > 0) {
+      w = (2.0 * pi * 1.0e6 * signo) / (dt_encoder * ENC_PPR * GEAR_BOX);
+    }
+
     if (filt) {
-      omega0_rad = omega0 * 2 * pi;
-      float denom = (Continuous == 1) ? cos(deltaT * omega0_rad) : cos(T * omega0_rad);
+      omega0_rad = omega0 * 2.0 * pi;
+      float Ts_speed = (Continuous == 1) ? deltaT : T;
+
+      float denom = cos(Ts_speed * omega0_rad);
       if (abs(denom) < 0.0001) denom = 0.0001;
-      float raw_alpha = (1 - sin((Continuous == 1 ? deltaT : T) * omega0_rad)) / denom;
+
+      float raw_alpha = (1.0 - sin(Ts_speed * omega0_rad)) / denom;
       alpha = constrain(raw_alpha, 0.0, 0.99);
-      a0 = (1 - alpha) / 2;
+      a0 = (1.0 - alpha) / 2.0;
 
       w_filt = a0 * (w + xk1) + alpha * yk1;
       xk1 = w;
       yk1 = w_filt;
     }
 
-    // === Send Data ===
+    float w_used = filt ? w_filt : w;
+
+    wk = des_speed;
+    e = wk - w_used;
+
+    proportional = Kp * e;
+
+    if (Continuous == 1) {
+      derivative = (Kd / deltaT) * (e - prev_e);
+    } 
+    else if (Discrete == 1) {
+      if (N == true) {
+        derivative = Kd * N * (e - prev_e) + prev_derivative * (1.0 - T * N);
+      } else {
+        derivative = (Kd / T) * (e - prev_e);
+      }
+    }
+
+    float integral_candidate = integral;
+
+    if (Continuous == 1) {
+      integral_candidate = integral + (e * deltaT * Ki);
+    } 
+    else if (Discrete == 1) {
+      integral_candidate = integral + (e * T * Ki);
+    }
+
+    float Vk_unsat = proportional + integral_candidate + derivative;
+
+    // ===== Anti-windup =====
+    bool allowIntegration = false;
+
+    if (Vk_unsat <= 12.0 && Vk_unsat >= -12.0) {
+      allowIntegration = true;
+    } 
+    else if (Vk_unsat > 12.0 && e < 0) {
+      allowIntegration = true;   // error ayuda a salir de saturación positiva
+    } 
+    else if (Vk_unsat < -12.0 && e > 0) {
+      allowIntegration = true;   // error ayuda a salir de saturación negativa
+    }
+
+    if (allowIntegration) {
+      integral = integral_candidate;
+    }
+
+    Vk = proportional + integral + derivative;
+
+    if (Vk > 12.0) {
+      Vk = 12.0;
+    } 
+    else if (Vk < -12.0) {
+      Vk = -12.0;
+    }
+
+    Vt = Vk;
+
+    dutyCycle = (Vk / VCC) * 100.0;
+    int dutyCycleMapped = map((int)dutyCycle, -100, 100, -255, 255);
+    pwmValue = abs(dutyCycleMapped);
+
+    controlMotor(motorStatus, dutyCycle, pwmValue);
+
+    prev_e = e;
+    prev_Ki = Ki;
+    prev_derivative = derivative;
+
     sendDataToClient();
   }
 }
