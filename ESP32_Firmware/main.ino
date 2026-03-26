@@ -579,33 +579,30 @@ float ContinuousSineResponse(float A, float omega, float phi, float tiempoActual
 
 // Function to calculate V(t) for the Discrete Sine Response
 float DiscreteSineResponse(float A, float omega, float phi, float tiempoActual, float offset, float T) {
-    timediscrete = (tiempoActual / 1000.0)* T; // Compute the time within one period
-    return A * sin((omega * timediscrete) + phi) + offset;
+    float tiempoSeg = tiempoActual / 1000.0;
+    int k = (tiempoSeg / T);
+    float tk = k * T;
+    return A * sin((omega * tk) + phi) + offset;
 }
 
 void SineControl() {
-    
-  Vt = ContinuousSineResponse(A, omega, phi, tiempoActual, offset);
-  dutyCycle = (Vt / VCC) * 100;
-  int dutyCycleMapped = map(dutyCycle, -100, 100, -255, 255);
-  pwmValue = abs(dutyCycleMapped);
-  Serial.println(dutyCycleMapped);
 
   if (Discrete == 1) {
     Vt = DiscreteSineResponse(A, omega, phi, tiempoActual, offset, T);
-    dutyCycle = (Vt / VCC) * 100;
-    dutyCycleMapped = map(dutyCycle, -100, 100, -255, 255);
-    pwmValue = abs(dutyCycleMapped);
+  } else {
+    Vt = ContinuousSineResponse(A, omega, phi, tiempoActual, offset);
   }
+
+  dutyCycle = (Vt / VCC) * 100.0;
+  int dutyCycleMapped = map((int)dutyCycle, -100, 100, -255, 255);
+  pwmValue = abs(dutyCycleMapped);
 
   controlMotor(motorStatus, dutyCycle, pwmValue);
 
   if (currentMillis - previousMillis >= interval) {
     previousMillis = currentMillis;
-    current_mA = 0;
     current_mA = ina219.getCurrent_mA();
-    w = (2 * 3.141569 * 1.0e6 * signo) / ((t - t_m) * ENC_PPR*GEAR_BOX);
-        
+    w = (2 * 3.141569 * 1.0e6 * signo) / ((t - t_m) * ENC_PPR * GEAR_BOX);
     sendDataToClient();
   }
 }
