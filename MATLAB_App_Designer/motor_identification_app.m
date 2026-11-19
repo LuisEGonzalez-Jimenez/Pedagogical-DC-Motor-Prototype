@@ -29,12 +29,22 @@ function motor_identification_app(data)
     S = struct('raw',[],'val',[],'model',[],'res',[]);
     hasSIT = ~isempty(which('tfest')) && license('test','Identification_Toolbox');
 
+    busy = false;                                  % true while a file dialog is open
+
     % ------------------------------------------------------------- layout
+    % Window size adapted to the screen and centered on it, wide enough for
+    % three columns: controls, plots and the results table.
+    scr  = get(groot,'ScreenSize');
+    figW = min(1500, round(0.94*scr(3)));
+    figH = min(900,  round(0.88*scr(4)));
+    figX = max(1, round((scr(3) - figW)/2));
+    figY = max(1, round((scr(4) - figH)/2));
     fig = uifigure('Name','Model Identification - DC Motor Trainer', ...
-                   'Position',[80 80 1180 680]);
-    g = uigridlayout(fig,[1 2]); g.ColumnWidth = {340,'1x'};
+                   'Position',[figX figY figW figH]);
+    g = uigridlayout(fig,[1 3]); g.ColumnWidth = {340,'1x',390};
 
     left = uigridlayout(g,[22 2]); left.RowHeight = repmat({24},1,22);
+    left.Layout.Row = 1; left.Layout.Column = 1;
     left.ColumnWidth = {150,'1x'}; left.Padding = [8 8 8 8];
 
     r = 1;
@@ -81,11 +91,19 @@ function motor_identification_app(data)
         'ButtonPushedFcn',@(~,~) onExport());
     b.Layout.Row = r; b.Layout.Column = [1 2];                       r=r+1;
 
-    tbl = uitable(left,'ColumnName',{'Quantity','Value','Unit'}, ...
-        'ColumnWidth',{120,90,'auto'},'RowName',{});
-    tbl.Layout.Row = [r 22]; tbl.Layout.Column = [1 2];
+    % The controls keep their fixed height at the top of the left column.
+    left.RowHeight = [repmat({24},1,r-1), {'1x'}];
 
+    % Plots in the middle column
     right = uigridlayout(g,[2 1]);
+    right.Layout.Row = 1; right.Layout.Column = 2;
+
+    % Results table in its own column, using the full height of the window,
+    % so all its rows (model, validation and PI design) are visible.
+    tbl = uitable(g,'ColumnName',{'Quantity','Value','Unit'}, ...
+        'ColumnWidth',{170,'auto',80},'RowName',{});
+    tbl.Layout.Row = 1; tbl.Layout.Column = 3;
+
     ax1 = uiaxes(right); title(ax1,'Speed'); xlabel(ax1,'Time (s)'); ylabel(ax1,'\omega (rad/s)'); grid(ax1,'on');
     ax2 = uiaxes(right); title(ax2,'Voltage and current'); xlabel(ax2,'Time (s)'); grid(ax2,'on');
 
@@ -95,8 +113,14 @@ function motor_identification_app(data)
 
     % ========================================================= callbacks
     function onLoad(isValidation)
+        % Ignore repeated clicks while the file dialog is open (on macOS a
+        % second click could open the dialog again).
+        if busy, return; end
+        busy = true;
         [f,p] = uigetfile({'*.mat;*.csv;*.txt','Data files (*.mat, *.csv, *.txt)'}, ...
                           'Select data file');
+        figure(fig);                               % bring the module to the front
+        busy = false;
         if isequal(f,0), return; end
         try
             D = readDataFile(fullfile(p,f));
@@ -107,7 +131,12 @@ function motor_identification_app(data)
             if isempty(S.model)
                 uialert(fig,'Estimate a model first.','Validation'); return;
             end
-            S.val = D; validate(f);
+            S.val = D;
+            try
+                validate(f);
+            catch err
+                uialert(fig,err.message,'Validation failed');
+            end
         else
             S.raw = D; S.model = []; fileLbl.Text = f; plotData();
         end
@@ -115,8 +144,8 @@ function motor_identification_app(data)
 
     function onEstimate()
         if isempty(S.raw), uialert(fig,'Load data first.','Estimate'); return; end
-        d = prepare(S.raw);
         try
+            d = prepare(S.raw);
             switch modelDD.Value
                 case 'First order + dead time', S.model = estFO(d);
                 case 'Second order',            S.model = estSO(d);
@@ -202,9 +231,21 @@ function motor_identification_app(data)
         d.i  = interp1(t,i,tu,'linear');
         d.Ts = Ts;
         n0 = max(1,min(5,round(0.05*numel(tu))));   % initial operating point
-        d.v0 = mean(d.v(1:n0)); d.w0 = mean(d.w(1:n0)); d.i0 = mean(d.i(1:n0));
-        if max(d.v) - min(d.v) < 0.1
-            error('The voltage does not change in the segment: select a step experiment.');
+        % Operating point. If the segment starts with the motor at rest, the
+        % absolute signals are used (the voltage can be applied from the first
+        % sample); otherwise, the deviations from the initial steady state.
+        % (The first sample is used: in closed loop the motor can start to
+        % turn within the first few samples.)
+        d.fromRest = abs(d.w(1)) < 0.1;
+        if d.fromRest
+            d.v0 = 0; d.w0 = 0; d.i0 = 0;
+        else
+            d.v0 = mean(d.v(1:n0)); d.w0 = mean(d.w(1:n0)); d.i0 = mean(d.i(1:n0));
+        end
+        if max(d.v) - min(d.v) < 0.5
+            error(['The voltage does not change enough in the selected segment ' ...
+                   '(%.2f V). Use a Step experiment, or move "Segment start" ' ...
+                   'before the change of voltage (for example, 0 s).'], max(d.v) - min(d.v));
         end
     end
 
@@ -221,6 +262,7 @@ function motor_identification_app(data)
             q = fitLS(fun,[K0 tau0 0],[0 1e-3 0],[Inf 10 1]);
             K = q(1); tau = q(2); theta = q(3);
         end
+        if theta < 1e-6, theta = 0; end            % numerically zero dead time
         m = struct('type','FO','K',K,'tau',tau,'theta',theta, ...
                    'G',tf(K,[tau 1],'InputDelay',theta),'Ts',d.Ts,'n',n_gear);
     end
@@ -310,6 +352,11 @@ function motor_identification_app(data)
         rows = {'Model', S.model.type, '';
                 'Sampling period', fmt(d.Ts), 's';
                 'Samples', sprintf('%d',numel(d.t)), ''};
+        if d.fromRest
+            rows = [rows; {'Operating point','from rest (absolute)',''}];
+        else
+            rows = [rows; {'Operating point', sprintf('v0 = %.2f V, w0 = %.2f rad/s',d.v0,d.w0), ''}];
+        end
         switch S.model.type
             case 'FO'
                 rows = [rows; {'K',fmt(S.model.K),'rad/(V s)'; 'tau',fmt(S.model.tau),'s';
