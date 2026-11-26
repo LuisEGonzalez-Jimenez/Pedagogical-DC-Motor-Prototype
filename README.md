@@ -66,7 +66,7 @@ Both files contain a USER SETTINGS block with placeholders (`YOUR_...`) that mus
 
 ## Tutorial video
 
-A 9-minute tutorial shows the hardware, the local (WiFi) and remote (MQTT) connection modes, open-loop step and sine responses, PI control, digital filters and derivative action, and the model identification module: https://youtu.be/rzhd7EXVtBw
+A 9-minute tutorial shows the hardware, the local (WiFi) and remote (MQTT) connection modes, open-loop step and sine responses, PI control, digital filters and derivative action, and the model identification module: https://youtu.be/uFBEwB15ca0
 
 ## Educational Purpose
 
