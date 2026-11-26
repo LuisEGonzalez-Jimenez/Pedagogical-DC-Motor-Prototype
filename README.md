@@ -6,8 +6,6 @@ The platform allows students to interact with a real physical system and analyze
 
 ## Tutorial video
 
-[![IoT DC Motor Platform Tutorial](https://img.youtube.com/vi/rzhd7EXVtBw/maxresdefault.jpg)](https://youtu.be/rzhd7EXVtBw)
-
 A 9-minute tutorial shows the hardware, the local (WiFi) and remote (MQTT) connection modes, open-loop step and sine responses, PI control, digital filters and derivative action, and the model identification module: https://youtu.be/rzhd7EXVtBw
 
 ## System Overview
