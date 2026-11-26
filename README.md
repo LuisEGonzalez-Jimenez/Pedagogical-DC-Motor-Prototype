@@ -16,6 +16,8 @@ The system consists of an ESP32-based DC motor controller and a MATLAB App Desig
 
 The system supports both MQTT communication (HiveMQ Cloud, TLS) and direct TCP/IP communication via WiFi (ESP32 hotspot).
 
+![Prototype architecture](prototype_architecture.png)
+
 ## Repository Structure
 
 ```
@@ -80,7 +82,7 @@ Students can analyze real-time system responses, identify a model of the motor f
 
 ## Authors
 
-Luis Ricardo Rivera-Goitia
-Luis Enrique González-Jiménez
-Department of Electronics, Systems and Informatics
+Luis Ricardo Rivera-Goitia<br>
+Luis Enrique González-Jiménez<br>
+Department of Electronics, Systems and Informatics<br>
 ITESO – Universidad Jesuita de Guadalajara
