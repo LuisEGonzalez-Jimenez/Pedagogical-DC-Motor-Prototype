@@ -4,10 +4,6 @@ This repository contains the software developed for an IoT-based pedagogical pla
 
 The platform allows students to interact with a real physical system and analyze motor responses using different control signals.
 
-## Tutorial video
-
-A 9-minute tutorial shows the hardware, the local (WiFi) and remote (MQTT) connection modes, open-loop step and sine responses, PI control, digital filters and derivative action, and the model identification module: https://youtu.be/rzhd7EXVtBw
-
 ## System Overview
 
 The system consists of an ESP32-based DC motor controller and a MATLAB App Designer graphical interface that allows users to send control commands and visualize motor signals in real time.
@@ -67,6 +63,10 @@ Pedagogical-DC-Motor-Prototype
 2. GUI and identification module: see `MATLAB_App_Designer/README.md`.
 
 Both files contain a USER SETTINGS block with placeholders (`YOUR_...`) that must be replaced with your own WiFi and MQTT broker data.
+
+## Tutorial video
+
+A 9-minute tutorial shows the hardware, the local (WiFi) and remote (MQTT) connection modes, open-loop step and sine responses, PI control, digital filters and derivative action, and the model identification module: https://youtu.be/rzhd7EXVtBw
 
 ## Educational Purpose
 
