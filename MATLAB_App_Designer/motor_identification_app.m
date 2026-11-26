@@ -14,7 +14,11 @@ function motor_identification_app(data)
 %   Estimation: nonlinear least squares (Optimization Toolbox + Control
 %   System Toolbox). If the System Identification Toolbox is installed, the
 %   option "Use tfest/ssest" estimates models 1-2 with tfest and a black-box
-%   state-space model with ssest.
+%   state-space model with ssest (simulation focus, no noise model).
+%
+%   Dead time: the platform has about one sample of delay. It is estimated
+%   in whole samples with the first-order model and used by all three models
+%   (row "theta" of the results table).
 %
 %   Default columns (telemetry order of the ESP32 firmware):
 %     1 current [mA] | 2 speed [rad/s] | 3 time [s] | 4 voltage [V]
@@ -138,7 +142,8 @@ function motor_identification_app(data)
                 uialert(fig,err.message,'Validation failed');
             end
         else
-            S.raw = D; S.model = []; fileLbl.Text = f; plotData();
+            % A new file clears the results of the previous one
+            S.raw = D; S.model = []; fileLbl.Text = f; tbl.Data = {}; plotData();
         end
     end
 
@@ -226,7 +231,12 @@ function motor_identification_app(data)
         Ts = median(diff(t));                       % uniform resampling for lsim
         tu = (t(1):Ts:t(end))';
         d.t  = tu - tu(1);
-        d.v  = interp1(t,v,tu,'previous');
+        % 'nearest' (not 'previous'): the time stamps of the ESP32 jitter by a few
+        % microseconds around the uniform grid; with 'previous', a sample stamped
+        % 2 us after its grid point is assigned to the next one and the step moves
+        % one sample, so the result depended on the sign of that jitter. The real
+        % delay of the platform is now estimated explicitly as theta (estFO).
+        d.v  = interp1(t,v,tu,'nearest');
         d.w  = interp1(t,w,tu,'linear');
         d.i  = interp1(t,i,tu,'linear');
         d.Ts = Ts;
@@ -257,10 +267,7 @@ function motor_identification_app(data)
             sys = tfest(z,1,0,NaN);
             K = dcgain(sys); p = pole(sys); tau = -1/real(p(1)); theta = sys.IODelay;
         else
-            [K0,tau0] = initialFO(d.t,u,y);
-            fun = @(q) simFO(q,d.t,u) - y;
-            q = fitLS(fun,[K0 tau0 0],[0 1e-3 0],[Inf 10 1]);
-            K = q(1); tau = q(2); theta = q(3);
+            [K,tau,theta] = fitFOdelay(d,u,y);
         end
         if theta < 1e-6, theta = 0; end            % numerically zero dead time
         m = struct('type','FO','K',K,'tau',tau,'theta',theta, ...
@@ -269,41 +276,47 @@ function motor_identification_app(data)
 
     function m = estSO(d)
         u = d.v - d.v0;  y = d.w - d.w0;
+        [K0,tau0,theta] = fitFOdelay(d,u,y);        % dead time of the platform
         if sitCB.Value && hasSIT
             z = iddata(y,u,d.Ts);
-            sys = tfest(z,2,0);
+            sys = tfest(z,2,0,theta);
             G = tf(sys); K = dcgain(G); p = sort(-1./real(pole(G)),'descend');
             tau1 = p(1); tau2 = p(2);
         else
-            [K0,tau0] = initialFO(d.t,u,y);
-            fun = @(q) lsim(tf(q(1),conv([q(2) 1],[q(3) 1])),u,d.t) - y;
+            fun = @(q) lsim(tf(q(1),conv([q(2) 1],[q(3) 1]),'InputDelay',theta),u,d.t) - y;
             q = fitLS(fun,[K0 tau0 0.1*tau0],[0 1e-4 1e-4],[Inf 10 10]);
             K = q(1); tau1 = max(q(2),q(3)); tau2 = min(q(2),q(3));
         end
-        m = struct('type','SO','K',K,'tau1',tau1,'tau2',tau2, ...
-                   'G',tf(K,conv([tau1 1],[tau2 1])),'Ts',d.Ts,'n',n_gear);
+        m = struct('type','SO','K',K,'tau1',tau1,'tau2',tau2,'theta',theta, ...
+                   'G',tf(K,conv([tau1 1],[tau2 1]),'InputDelay',theta), ...
+                   'Ts',d.Ts,'n',n_gear);
     end
 
     function m = estSS(d)
         u  = d.v - d.v0;
         Y  = [d.i - d.i0, d.w - d.w0];
+        [K0,tau0,theta] = fitFOdelay(d,u,Y(:,2));  % dead time of the platform
         if sitCB.Value && hasSIT                      % black-box model, order 2
+            % Simulation focus, zero initial state and no noise model: with the
+            % default options ssest fits the one-step-ahead prediction and the
+            % simulated response can be poor (undershoot, wrong current level).
             z = iddata(Y,u,d.Ts);
-            sys = ssest(z,2);
-            m = struct('type','SSB','sys',ss(sys),'Ts',d.Ts,'n',n_gear);
+            opt = ssestOptions('Focus','simulation','InitialState','zero');
+            sys = ssest(z,2,'Feedthrough',false,'DisturbanceModel','none', ...
+                        'InputDelay',theta,opt);
+            m = struct('type','SSB','sys',ss(sys),'theta',theta,'Ts',d.Ts,'n',n_gear);
             return;
         end
         % Grey box: parameters q = log([R L Ke B J]) for positivity and scaling
-        [K0,tau0] = initialFO(d.t,u,Y(:,2));
         R0 = 10; Ke0 = 1/(n_gear*K0); B0 = 0.05*Ke0^2/R0;
         J0 = tau0*(R0*B0 + Ke0^2)/R0; L0 = 1e-3;
         q0 = log([R0 L0 Ke0 B0 J0]);
         sc = std(Y); sc(sc == 0) = 1;
-        fun = @(q) reshape((simSS(exp(q),d.t,u) - Y)./sc,[],1);
+        fun = @(q) reshape((simSS(exp(q),theta,d.t,u) - Y)./sc,[],1);
         q = fitLS(fun,q0,q0-8,q0+8);
         P = exp(q);
         m = struct('type','SS','R',P(1),'L',P(2),'Ke',P(3),'B',P(4),'J',P(5), ...
-                   'sys',ssModel(P),'Ts',d.Ts,'n',n_gear);
+                   'theta',theta,'sys',ssModel(P,theta),'Ts',d.Ts,'n',n_gear);
     end
 
     function q = fitLS(fun,q0,lb,ub)
@@ -315,6 +328,27 @@ function motor_identification_app(data)
             cost = @(x) sum(fun(min(max(x,lb),ub)).^2);
             q = fminsearch(cost,q0,optimset('Display','off','MaxFunEvals',8000));
             q = min(max(q,lb),ub);
+        end
+    end
+
+    function [K,tau,theta] = fitFOdelay(d,u,y)
+        % First order + dead time with the dead time searched in whole samples
+        % (0 to 5 Ts); K and tau are fitted for each one and the best fit is
+        % kept. Estimating theta as a free continuous parameter does not work:
+        % below one sample lsim hardly changes with theta, so the optimizer
+        % stays at its initial value 0. The platform has about one sample of
+        % delay (the voltage written at sample k is seen in the speed from
+        % sample k+2). The same theta is used by the other two models.
+        [K0,tau0] = initialFO(d.t,u,y);
+        best = Inf; K = K0; tau = tau0; theta = 0;
+        for nd = 0:5
+            th  = nd*d.Ts;
+            fun = @(q) simFO([q(1) q(2) th],d.t,u) - y;
+            q   = fitLS(fun,[K0 tau0],[0 1e-3],[Inf 10]);
+            sse = sum(fun(q).^2);
+            if sse < best
+                best = sse; K = q(1); tau = q(2); theta = th;
+            end
         end
     end
 
@@ -333,16 +367,16 @@ function motor_identification_app(data)
         y = lsim(tf(q(1),[q(2) 1],'InputDelay',q(3)),u,t);
     end
 
-    function sys = ssModel(P)
+    function sys = ssModel(P,theta)
         R = P(1); L = P(2); Ke = P(3); B = P(4); J = P(5);
         A  = [-R/L, -n_gear*Ke/L; Ke/(n_gear*J), -B/J];
         Bm = [1/L; 0];
-        sys = ss(A,Bm,eye(2),zeros(2,1), ...
+        sys = ss(A,Bm,eye(2),zeros(2,1),'InputDelay',theta, ...
                  'StateName',{'i','w'},'OutputName',{'i (A)','w (rad/s)'});
     end
 
-    function Y = simSS(P,t,u)
-        Y = lsim(ssModel(P),u,t);
+    function Y = simSS(P,theta,t,u)
+        Y = lsim(ssModel(P,theta),u,t);
     end
 
     % ============================================ results and validation
@@ -363,16 +397,24 @@ function motor_identification_app(data)
                                'theta',fmt(S.model.theta),'s'}];
             case 'SO'
                 rows = [rows; {'K',fmt(S.model.K),'rad/(V s)'; 'tau1',fmt(S.model.tau1),'s';
-                               'tau2',fmt(S.model.tau2),'s'}];
+                               'tau2',fmt(S.model.tau2),'s'; 'theta',fmt(S.model.theta),'s'}];
             case 'SS'
                 [K,tau] = firstOrderEquivalent(S.model);
                 rows = [rows; {'R',fmt(S.model.R),'Ohm'; 'L',fmt(S.model.L),'H';
                                'Ke = Kt',fmt(S.model.Ke),'V s/rad'; 'B',fmt(S.model.B),'N m s';
                                'J',fmt(S.model.J),'kg m^2'; 'tau_e = L/R',fmt(S.model.L/S.model.R),'s';
-                               'Equivalent K',fmt(K),'rad/(V s)'; 'Equivalent tau',fmt(tau),'s'}];
+                               'Equivalent K',fmt(K),'rad/(V s)'; 'Equivalent tau',fmt(tau),'s';
+                               'theta',fmt(S.model.theta),'s'}];
+                if S.model.L/S.model.R < d.Ts
+                    % tau_e is below the sampling period: the electrical mode is
+                    % not observable in the data and L (hence tau_e) is not
+                    % reliable. It is measured with an oscilloscope (Practice 3.2).
+                    rows = [rows; {'Note','L not reliable: tau_e < Ts',''}];
+                end
             case 'SSB'
                 [K,tau] = firstOrderEquivalent(S.model);
-                rows = [rows; {'Equivalent K',fmt(K),'rad/(V s)'; 'Equivalent tau',fmt(tau),'s'}];
+                rows = [rows; {'Equivalent K',fmt(K),'rad/(V s)'; 'Equivalent tau',fmt(tau),'s';
+                               'theta',fmt(S.model.theta),'s'}];
         end
         rows = [rows; {'Fit speed (estimation)', sprintf('%.1f',fw), '%'}];
         if ~isempty(ihat)
@@ -419,25 +461,44 @@ function motor_identification_app(data)
     end
 
     function plotFit(d,yw,yi,ttl)
-        cla(ax1); plot(ax1,d.t,d.w,'.','MarkerSize',6); hold(ax1,'on');
+        cla(ax1); ylim(ax1,'auto'); plot(ax1,d.t,d.w,'.','MarkerSize',6); hold(ax1,'on');
         plot(ax1,d.t,yw + d.w0,'LineWidth',1.5); hold(ax1,'off');
         legend(ax1,{'Measured','Model'},'Location','southeast'); title(ax1,['Speed - ' ttl]);
         clearDual(); yyaxis(ax2,'left'); plot(ax2,d.t,d.v,'LineWidth',1.2); ylabel(ax2,'V (V)');
+        setVoltageLimits(d.v);
         yyaxis(ax2,'right'); plot(ax2,d.t,1000*d.i,'.','MarkerSize',5); hold(ax2,'on');
         if ~isempty(yi), plot(ax2,d.t,1000*(yi + d.i0),'-','LineWidth',1.2); end
-        hold(ax2,'off'); ylabel(ax2,'i (mA)'); title(ax2,['Voltage and current - ' ttl]);
+        ylabel(ax2,'i (mA)'); title(ax2,['Voltage and current - ' ttl]);
+        drawnow limitrate;
     end
 
     function plotData()
         try, d = prepare(S.raw); catch, return; end
-        cla(ax1); plot(ax1,d.t,d.w,'.'); title(ax1,'Speed - loaded data');
-        clearDual(); yyaxis(ax2,'left'); plot(ax2,d.t,d.v); ylabel(ax2,'V (V)');
-        yyaxis(ax2,'right'); plot(ax2,d.t,1000*d.i,'.'); ylabel(ax2,'i (mA)');
+        cla(ax1); ylim(ax1,'auto'); plot(ax1,d.t,d.w,'.','MarkerSize',6);
+        legend(ax1,{'Measured'},'Location','southeast'); title(ax1,'Speed - loaded data');
+        clearDual(); yyaxis(ax2,'left'); plot(ax2,d.t,d.v,'LineWidth',1.2); ylabel(ax2,'V (V)');
+        setVoltageLimits(d.v);
+        yyaxis(ax2,'right'); plot(ax2,d.t,1000*d.i,'.','MarkerSize',5); ylabel(ax2,'i (mA)');
+        title(ax2,'Voltage and current - loaded data'); drawnow limitrate;
     end
 
     % ============================================================ helpers
     function clearDual()
-        yyaxis(ax2,'right'); cla(ax2); yyaxis(ax2,'left'); cla(ax2);
+        % cla does not reset the axis limits; without 'auto' the left axis
+        % could keep its initial 0-1 V range and hide the voltage.
+        % Both sides are cleared and left in 'hold on': with 'replace', the
+        % first plot on the right side after the axes were created could
+        % reset the left side and the voltage line was not shown.
+        yyaxis(ax2,'right'); cla(ax2); ylim(ax2,'auto'); hold(ax2,'on');
+        yyaxis(ax2,'left');  cla(ax2); ylim(ax2,'auto'); hold(ax2,'on');
+    end
+    function setVoltageLimits(v)
+        % Explicit limits for the voltage axis. On the first plot after the
+        % module opens, the left axis of yyaxis could keep its initial 0-1 V
+        % range even in 'auto' mode, which hid the voltage line.
+        lo = min(v); hi = max(v);
+        pad = max(0.05*(hi - lo), 0.5);
+        ylim(ax2,[lo - pad, hi + pad]);
     end
     function addRows(rows)
         if isempty(tbl.Data), tbl.Data = rows; else, tbl.Data = [tbl.Data; rows]; end
