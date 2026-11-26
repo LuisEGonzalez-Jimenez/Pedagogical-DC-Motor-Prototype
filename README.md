@@ -1,94 +1,88 @@
-# MATLAB GUI – DC Motor Control Interface
+# Pedagogical DC Motor Control Platform
 
-This folder contains the MATLAB App Designer interface used to control and
-monitor the ESP32-based DC motor platform.
+This repository contains the software developed for an IoT-based pedagogical platform for teaching automatic control and embedded systems using a DC motor system controlled by an ESP32 microcontroller.
 
-The GUI allows users to:
+The platform allows students to interact with a real physical system and analyze motor responses using different control signals.
 
-- Send control signals (Step, Sine, PID – continuous or discrete)
-- Configure control parameters and update the PID gains during an experiment
-- Configure the digital low-pass filters for speed and current
-- Visualize real-time motor signals
-- Save the experiment data to a `.mat` file
-- Communicate with the ESP32 firmware using MQTT or TCP/IP
-- Identify the model of the motor from the recorded data and compute PI gains
+## Demonstration video
 
-## Files
+[![IoT DC Motor Platform Tutorial](https://img.youtube.com/vi/rzhd7EXVtBw/maxresdefault.jpg)](https://youtu.be/rzhd7EXVtBw)
 
-| File / folder | Description |
-|---|---|
-| `ESP32_MQTT_DCmotor_New_Certificate_V1_1.mlapp` | MATLAB GUI |
-| `motor_identification_app.m` | Model identification module (opened with the **Identification** button) |
-| `generate_synthetic_data.m` | Creates `Synthetic_FO_test.mat`, synthetic data from a known model to verify the identification module |
-| `isrgrootx1.pem` | Root certificate for HiveMQ Cloud (TLS) |
-| `*.png`, `*.jpg` | Images (equations and symbols) shown by the GUI |
+A 9-minute tutorial shows the hardware, the local (WiFi) and remote (MQTT) connection modes, open-loop step and sine responses, PI control, digital filters and derivative action, and the model identification module: https://youtu.be/rzhd7EXVtBw
 
-The GUI loads the certificate and the images from **the same folder as the
-`.mlapp`**, so keep all these files together in one folder.
+## System Overview
 
-## Requirements
+The system consists of an ESP32-based DC motor controller and a MATLAB App Designer graphical interface that allows users to send control commands and visualize motor signals in real time.
 
-- MATLAB R2024b or newer, with App Designer
-- **Industrial Communication Toolbox** (provides `mqttclient`)
-- Internet connection (for MQTT communication)
+The system supports both MQTT communication (HiveMQ Cloud, TLS) and direct TCP/IP communication via WiFi (ESP32 hotspot).
 
-## Setup
+![Prototype architecture](prototype_architecture.png)
 
-1. Download this whole folder (keep the `.mlapp`, `isrgrootx1.pem` and the images together).
-2. Optional: add the folder to the MATLAB path
-   (**Home → Set Path → Add Folder… → Save**) so the images also appear in Design View.
-3. Open the `.mlapp` in App Designer, go to **Code View** and, in the
-   **USER SETTINGS** block of the properties, replace the placeholders (`YOUR_...`):
-   `brokerAddress`, `Username`, `Password` (your MQTT broker data).
-4. Do not rename the `.mlapp` file outside MATLAB; the class name must match the
-   file name. Use **Save As** in App Designer instead.
-
-## How to Run
-
-1. Open MATLAB and the `.mlapp` file in App Designer.
-2. Click **Run**.
-3. Select the connection type (**MQTT Broker** or **TCP/IP**) and press **Connect**.
-   - TCP/IP: first connect the computer to the ESP32 hotspot.
-   - macOS: allow MATLAB in **System Settings → Privacy & Security → Local Network**,
-     otherwise the TCP connection fails with "No route to host".
-4. Choose the tab (Step, Sine or PID), set the parameters and press **Start**.
-
-## Saved data
-
-Files saved with **Save** contain the table `data` with the columns
+## Repository Structure
 
 ```
-Time, Speed, FiltSpeed, Current, FiltCurrent, Voltage, Error, DutyCycle
+Pedagogical-DC-Motor-Prototype
+│
+├── ESP32_Firmware
+│   ├── ESP32_Firmware_V1_1
+│   │   └── ESP32_Firmware_V1_1.ino      ESP32 firmware (Step, Sine, PID)
+│   ├── TFT_eSPI_config
+│   │   └── User_Setup.h                 display configuration (TFT_eSPI)
+│   └── README.md
+│
+├── MATLAB_App_Designer
+│   ├── ESP32_MQTT_DCmotor_New_Certificate_V1_1.mlapp   MATLAB GUI
+│   ├── motor_identification_app.m       model identification module
+│   ├── generate_synthetic_data.m        synthetic data to verify the module
+│   ├── isrgrootx1.pem                   root certificate for HiveMQ Cloud (TLS)
+│   ├── *.png, *.jpg                     images used by the GUI (same folder as the .mlapp)
+│   └── README.md
+│
+├── prototype_architecture.png
+└── README.md
 ```
 
-## Identification module
+## Features
 
-Press **Identification** in the GUI, or run `motor_identification_app` in the
-MATLAB Command Window.
+* Step response experiments
+* Sinusoidal input experiments (continuous and discrete)
+* PID control of motor speed (continuous and discrete, optional derivative filter N)
+* First-order IIR low-pass digital filters for speed and current
+* Real-time visualization of motor signals
+* Data export to `.mat` files
+* Model identification module: first-order model with dead time, second-order model and grey-box state-space model (R, L, Ke, B, J), validation with a second experiment, PI design by lambda tuning, and export of the model to the MATLAB workspace
+* Communication using MQTT or TCP/IP
+* Current measurement using INA219
+* Touchscreen interface on ESP32
 
-1. **Data:** load a file saved with **Save** (or use the data passed from the
-   GUI). For a step from 3 V to 9 V at t = 2 s, use *Segment start* = 1.5 s.
-2. **Model:** choose the structure (first order + dead time, second order or
-   state space) and press **Estimate model**. The dead time is searched in
-   whole sampling periods.
-3. **Validation:** load a second experiment to compare it with the model.
-4. **PI design:** enter the desired closed-loop time constant lambda and press
-   **Compute PI gains** (Kp = tau/(K lambda), Ki = 1/(K lambda)).
+## Hardware Components
 
-The *System Identification Toolbox* is optional (checkbox *Use tfest/ssest*);
-without it the module uses its own least-squares fit.
+* ESP32 microcontroller (ESP32 DevKit V1)
+* DC motor with encoder
+* TB6612FNG motor driver
+* INA219 current sensor
+* ILI9341 TFT touchscreen display (XPT2046 touch controller)
 
-### Verification with synthetic data
+## Quick Start
 
-Run `generate_synthetic_data` to create `Synthetic_FO_test.mat`, generated from
-the known model G(s) = 1.08/(0.16 s + 1), with steps of 3 V and 9 V and a fixed
-random seed. Loading this file in the module with *Segment start* = 1.5 s gives
-K = 1.080, tau = 0.158 s and theta = 0, the values of the true model.
+1. Firmware: see `ESP32_Firmware/README.md`.
+2. GUI and identification module: see `MATLAB_App_Designer/README.md`.
+
+Both files contain a USER SETTINGS block with placeholders (`YOUR_...`) that must be replaced with your own WiFi and MQTT broker data.
+
+## Educational Purpose
+
+This platform was developed as a teaching tool for courses related to:
+
+* Automatic Control
+* Embedded Systems
+* Internet of Things (IoT)
+
+Students can analyze real-time system responses, identify a model of the motor from their own data, and design and verify controllers on the real system.
 
 ## Authors
 
-Luis Ricardo Rivera-Goitia  
-Luis Enrique González-Jiménez  
-
-Department of Electronics, Systems and Informatics  
+Luis Ricardo Rivera-Goitia<br>
+Luis Enrique González-Jiménez<br>
+Department of Electronics, Systems and Informatics<br>
 ITESO – Universidad Jesuita de Guadalajara
