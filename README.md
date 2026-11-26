@@ -4,7 +4,7 @@ This repository contains the software developed for an IoT-based pedagogical pla
 
 The platform allows students to interact with a real physical system and analyze motor responses using different control signals.
 
-## Demonstration video
+## Tutorial video
 
 [![IoT DC Motor Platform Tutorial](https://img.youtube.com/vi/rzhd7EXVtBw/maxresdefault.jpg)](https://youtu.be/rzhd7EXVtBw)
 
